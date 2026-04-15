@@ -5,9 +5,10 @@
 """
 
 import os
+import time
 import warnings
+import random
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import yfinance as yf
@@ -17,6 +18,12 @@ warnings.filterwarnings('ignore')
 # 缓存目录
 CACHE_DIR = 'data'
 STOCK_DATA_CACHE_DAYS = 7
+
+# 请求间隔（秒）
+REQUEST_DELAY = 1.5
+
+# 最大重试次数
+MAX_RETRIES = 3
 
 
 def get_cache_path(stock_code):
@@ -36,11 +43,11 @@ def is_cache_valid(cache_path):
 
 def load_stock_data(stock_code, start_date=None, end_date=None, use_cache=True):
     """
-    获取单只股票历史数据
+    获取单只股票历史数据（带重试机制）
 
     参数:
         stock_code: 股票代码（如 '000001.SZ'）
-        start_date: 开始日期，默认为3年前
+        start_date: 开始日期，默认为1年前
         end_date: 结束日期，默认为今天
         use_cache: 是否使用缓存
 
@@ -50,7 +57,8 @@ def load_stock_data(stock_code, start_date=None, end_date=None, use_cache=True):
     if end_date is None:
         end_date = datetime.now().strftime('%Y-%m-%d')
     if start_date is None:
-        start_date = (datetime.now() - timedelta(days=365*3)).strftime('%Y-%m-%d')
+        # 默认1年数据，减少请求量
+        start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
 
     cache_path = get_cache_path(stock_code)
 
@@ -58,45 +66,61 @@ def load_stock_data(stock_code, start_date=None, end_date=None, use_cache=True):
     if use_cache and is_cache_valid(cache_path):
         try:
             df = pd.read_pickle(cache_path)
-            # 确保数据范围足够
             df = df[(df.index >= start_date) & (df.index <= end_date)]
             if len(df) > 10:
+                print(f"📦 {stock_code} 从缓存加载 ({len(df)} 条)")
                 return df
         except Exception:
             pass
 
-    # 下载数据
-    try:
-        ticker = yf.Ticker(stock_code)
-        df = ticker.history(start=start_date, end=end_date, auto_adjust=False)
+    # 带重试机制下载数据
+    for retry in range(MAX_RETRIES):
+        try:
+            # 添加随机间隔，避免请求过快
+            time.sleep(REQUEST_DELAY + random.uniform(0.5, 1.5))
 
-        if df.empty:
-            print(f"⚠️ {stock_code} 无数据")
-            return pd.DataFrame()
+            ticker = yf.Ticker(stock_code)
+            df = ticker.history(start=start_date, end=end_date, auto_adjust=False, timeout=30)
 
-        # 确保列名一致
-        df.columns = [col.capitalize() for col in df.columns]
+            if df.empty:
+                print(f"⚠️ {stock_code} 无数据")
+                return pd.DataFrame()
 
-        # 保存到缓存
-        if use_cache and len(df) > 10:
-            df.to_pickle(cache_path)
+            # 确保列名一致
+            df.columns = [col.capitalize() for col in df.columns]
 
-        return df
+            # 保存到缓存
+            if len(df) > 10:
+                df.to_pickle(cache_path)
+                print(f"✓ {stock_code} 获取成功 ({len(df)} 条)")
+                return df
 
-    except Exception as e:
-        print(f"⚠️ 获取 {stock_code} 数据失败: {e}")
-        return pd.DataFrame()
+            return df
+
+        except Exception as e:
+            error_msg = str(e)
+            if '429' in error_msg or 'Too Many Requests' in error_msg:
+                print(f"⏳ {stock_code} 限流，等待 {5*(retry+1)} 秒后重试...")
+                time.sleep(5 * (retry + 1))
+            elif retry < MAX_RETRIES - 1:
+                print(f"⚠️ {stock_code} 获取失败 (重试 {retry+1}/{MAX_RETRIES}): {e}")
+                time.sleep(2 ** retry)  # 指数退避
+            else:
+                print(f"✗ {stock_code} 获取失败: {e}")
+                return pd.DataFrame()
+
+    return pd.DataFrame()
 
 
-def load_multiple_stocks(stock_list, start_date=None, end_date=None, max_workers=5):
+def load_multiple_stocks(stock_list, start_date=None, end_date=None, max_workers=2):
     """
-    并行获取多只股票数据
+    串行获取多只股票数据（避免限流）
 
     参数:
         stock_list: 股票代码字典或列表
         start_date: 开始日期
         end_date: 结束日期
-        max_workers: 最大并行数
+        max_workers: 最大并行数（默认2，避免限流）
 
     返回:
         dict: {stock_code: DataFrame}
@@ -107,22 +131,24 @@ def load_multiple_stocks(stock_list, start_date=None, end_date=None, max_workers
         codes = stock_list
 
     results = {}
+    total = len(codes)
 
-    def download_one(code):
+    print(f"📥 开始获取 {total} 只股票数据（请耐心等待）...")
+
+    for i, code in enumerate(codes, 1):
+        print(f"[{i}/{total}] ", end="")
         df = load_stock_data(code, start_date, end_date)
-        return code, df
+        if not df.empty:
+            results[code] = df
+        else:
+            print(f"✗ {code} 获取失败")
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(download_one, code): code for code in codes}
+        # 每获取5只股票后休息一下
+        if i % 5 == 0:
+            print(f"⏸️ 已获取 {i}/{total}，休息3秒...")
+            time.sleep(3)
 
-        for future in as_completed(futures):
-            code, df = future.result()
-            if not df.empty:
-                results[code] = df
-                print(f"✓ {code} 获取成功 ({len(df)} 条数据)")
-            else:
-                print(f"✗ {code} 获取失败")
-
+    print(f"\n✓ 成功获取 {len(results)}/{total} 只股票")
     return results
 
 
