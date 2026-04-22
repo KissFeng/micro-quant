@@ -7,7 +7,7 @@ CatBoost 模型模块
 import os
 import pickle
 import numpy as np
-from datetime import datetime
+import pandas as pd
 
 from catboost import CatBoostClassifier, Pool
 from sklearn.metrics import accuracy_score, roc_auc_score
@@ -26,19 +26,7 @@ class CatBoostModel:
         self.metrics = {}
 
     def train(self, X_train, y_train, X_val=None, y_val=None, eval_set=None):
-        """
-        训练 CatBoost 模型
-
-        参数:
-            X_train: 训练特征
-            y_train: 训练标签
-            X_val: 验证特征（可选）
-            y_val: 验证标签（可选）
-            eval_set: 评估集元组列表
-
-        返回:
-            self
-        """
+        """训练 CatBoost 模型"""
         if isinstance(X_train, pd.DataFrame):
             self.feature_columns = X_train.columns.tolist()
             X_train_np = X_train.values
@@ -47,10 +35,8 @@ class CatBoostModel:
             X_train_np = X_train
             y_train_np = y_train
 
-        # 创建 Pool
         train_pool = Pool(X_train_np, y_train_np)
 
-        # 处理验证集
         eval_pool = None
         if X_val is not None:
             if isinstance(X_val, pd.DataFrame):
@@ -59,7 +45,6 @@ class CatBoostModel:
                 y_val = y_val.values
             eval_pool = Pool(X_val, y_val)
 
-        # 构建参数
         cat_params = {
             'iterations': self.params.get('iterations', 100),
             'learning_rate': self.params.get('learning_rate', 0.05),
@@ -69,7 +54,6 @@ class CatBoostModel:
             'early_stopping_rounds': 20
         }
 
-        # 训练
         if eval_pool is not None:
             self.model = CatBoostClassifier(**cat_params)
             self.model.fit(train_pool, eval_set=eval_pool, use_best_model=True)
@@ -78,7 +62,7 @@ class CatBoostModel:
             self.model = CatBoostClassifier(**cat_params)
             self.model.fit(train_pool)
 
-        # 计算训练集指标
+        # 计算指标
         y_pred_proba = self.model.predict_proba(X_train_np)[:, 1]
         y_pred = (y_pred_proba > 0.5).astype(int)
 
@@ -90,34 +74,15 @@ class CatBoostModel:
         return self
 
     def predict(self, X):
-        """
-        预测概率
-
-        参数:
-            X: 特征数据
-
-        返回:
-            array: 预测概率
-        """
+        """预测概率"""
         if self.model is None:
-            raise ValueError("模型未训练，请先调用 train()")
-
+            raise ValueError("模型未训练")
         if isinstance(X, pd.DataFrame):
             X = X.values
-
         return self.model.predict_proba(X)[:, 1]
 
     def predict_classes(self, X, threshold=0.5):
-        """
-        预测类别
-
-        参数:
-            X: 特征数据
-            threshold: 阈值
-
-        返回:
-            array: 预测类别 (0 或 1)
-        """
+        """预测类别"""
         proba = self.predict(X)
         return (proba > threshold).astype(int)
 
@@ -125,19 +90,12 @@ class CatBoostModel:
         """获取特征重要性"""
         if self.model is None:
             return None
-
         importance = self.model.get_feature_importance()
         return dict(zip(self.feature_columns, importance))
 
     def save(self, path='models/catboost_model.pkl'):
-        """
-        保存模型
-
-        参数:
-            path: 保存路径
-        """
+        """保存模型"""
         os.makedirs(os.path.dirname(path) if os.path.dirname(path) else 'models', exist_ok=True)
-
         model_data = {
             'model': self.model,
             'feature_columns': self.feature_columns,
@@ -145,29 +103,17 @@ class CatBoostModel:
             'metrics': self.metrics,
             'model_type': self.model_type
         }
-
         with open(path, 'wb') as f:
             pickle.dump(model_data, f)
-
-        print(f"✓ CatBoost 模型已保存到 {path}")
+        print(f"CatBoost 模型已保存到 {path}")
 
     def load(self, path='models/catboost_model.pkl'):
-        """
-        加载模型
-
-        参数:
-            path: 模型路径
-        """
+        """加载模型"""
         with open(path, 'rb') as f:
             model_data = pickle.load(f)
-
         self.model = model_data['model']
         self.feature_columns = model_data['feature_columns']
         self.params = model_data['params']
         self.metrics = model_data.get('metrics', {})
         self.model_type = model_data.get('model_type', 'catboost')
-
-        print(f"✓ CatBoost 模型已从 {path} 加载")
-
-
-import pandas as pd
+        print(f"CatBoost 模型已从 {path} 加载")

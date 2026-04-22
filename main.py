@@ -125,13 +125,14 @@ def run_training(horizon, test_ratio=0.2):
     return results
 
 
-def run_prediction(models, horizon):
+def run_prediction(models, horizon, feature_columns=None):
     """
     运行预测流程
 
     参数:
         models: 模型字典
         horizon: 预测周期
+        feature_columns: 特征列名列表（用于确保特征一致）
 
     返回:
         DataFrame: 预测结果
@@ -156,26 +157,47 @@ def run_prediction(models, horizon):
             continue
 
         # 计算特征
-        X, y, feature_cols = engineer.prepare_features(df, horizon)
+        X, y, feat_cols = engineer.prepare_features(df, horizon)
         if X.empty:
             continue
+
+        # 如果有指定的特征列，只使用这些列
+        if feature_columns:
+            # 确保只使用训练时的特征
+            X = X[[c for c in feature_columns if c in X.columns]]
 
         current_price = df['Close'].iloc[-1]
         current_date = df.index[-1]
 
         # 各模型预测
         model_probs = {}
-        for model_name, model_obj in models.items():
+        for model_name, model_res in models.items():
             try:
+                # model_res 可能是嵌套字典 {'model': xxx} 或直接是模型对象
+                if isinstance(model_res, dict):
+                    model_obj = model_res.get('model', model_res)
+                else:
+                    model_obj = model_res
+
                 if model_name == 'LSTM':
+                    # LSTM 需要特殊处理
                     X_scaled = model_obj.scaler.transform(X.values)
                     X_seq, _ = model_obj._create_sequences(X_scaled)
                     prob = model_obj.model.predict(X_seq, verbose=0).flatten()[-1]
+                    model_probs[model_name] = float(prob)
                 else:
-                    prob = model_obj.predict(X.tail(1))[0]
-                model_probs[model_name] = prob
-            except:
-                pass
+                    # LGBM/CatBoost
+                    if hasattr(model_obj, 'feature_columns') and model_obj.feature_columns:
+                        X_pred = X[[c for c in model_obj.feature_columns if c in X.columns]]
+                    else:
+                        X_pred = X
+                    X_values = X_pred.tail(1).values if hasattr(X_pred, 'values') else X_pred.tail(1)
+                    prob = model_obj.predict(X_values)
+                    if hasattr(prob, '__len__'):
+                        prob = prob[0]
+                    model_probs[model_name] = float(prob)
+            except Exception as e:
+                print(f"   Warning: {model_name} prediction failed: {e}")
 
         if model_probs:
             avg_prob = np.mean(list(model_probs.values()))
@@ -381,7 +403,13 @@ def main():
                         pass
 
         if model_results:
-            predictions_df = run_prediction(model_results, args.horizon)
+            # 从第一个非LSTM模型获取特征列
+            feature_cols = None
+            for name, res in model_results.items():
+                if name != 'LSTM' and hasattr(res['model'], 'feature_columns') and res['model'].feature_columns:
+                    feature_cols = res['model'].feature_columns
+                    break
+            predictions_df = run_prediction(model_results, args.horizon, feature_cols)
 
     # 回测
     backtest_results = {}
