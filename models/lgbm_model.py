@@ -35,7 +35,7 @@ class LightGBMModel:
         train_data = lgb.Dataset(X_train, label=y_train)
 
         callbacks = [
-            lgb.early_stopping(stopping_rounds=20),
+            lgb.early_stopping(stopping_rounds=50),
             lgb.log_evaluation(period=0)
         ]
 

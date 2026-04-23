@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 
 # 缓存目录
 CACHE_DIR = 'data'
-STOCK_DATA_CACHE_DAYS = 7
+STOCK_DATA_CACHE_DAYS = 3
 
 # 请求配置
 REQUEST_DELAY = 0.3
@@ -188,7 +188,7 @@ def load_stock_data(stock_code, start_date=None, end_date=None, use_cache=True):
 
     # 获取数据
     for retry in range(MAX_RETRIES):
-        df = get_stock_data_tencent(stock_code, period_days=365)
+        df = get_stock_data_tencent(stock_code, period_days=730)
 
         if not df.empty:
             if start_date:

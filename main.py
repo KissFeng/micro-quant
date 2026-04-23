@@ -253,15 +253,14 @@ def run_backtest(model_results, horizon):
         print("⚠️ 数据不足，跳过回测")
         return {}
 
-    # 合并所有股票价格（等权平均作为基准）
-    price_dfs = []
+    # 构建每只股票的价格字典
+    prices_dict = {}
     for code, df in stock_data.items():
         if not df.empty:
-            price_dfs.append(df['Close'])
-    if not price_dfs:
+            prices_dict[code] = df['Close']
+    if not prices_dict:
         print("⚠️ 数据不足，跳过回测")
         return {}
-    all_prices = pd.concat(price_dfs, axis=1).mean(axis=1)
 
     # 对每只股票生成回测预测
     engineer = FeatureEngineer()
@@ -345,7 +344,7 @@ def run_backtest(model_results, horizon):
 
     # 运行回测
     engine = BacktestEngine(initial_capital=100000)
-    results = engine.run(merged, all_prices, confidence_threshold=0.50)
+    results = engine.run(merged, prices_dict, confidence_threshold=0.50)
 
     print(f"\n回测结果:")
     print(f"  总收益率:   {results['total_return']*100:.2f}%")

@@ -51,7 +51,7 @@ class CatBoostModel:
             'depth': self.params.get('depth', 5),
             'random_seed': self.params.get('random_seed', 42),
             'verbose': self.params.get('verbose', False),
-            'early_stopping_rounds': 20
+            'early_stopping_rounds': 50
         }
 
         if eval_pool is not None:

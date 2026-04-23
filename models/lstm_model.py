@@ -38,12 +38,15 @@ class LSTMModel:
 
     def build_model(self, input_shape):
         """构建 LSTM 模型"""
+        from tensorflow.keras.regularizers import l2
         model = Sequential([
-            LSTM(self.params.get('lstm_units_1', 64), return_sequences=True, input_shape=input_shape),
+            LSTM(self.params.get('lstm_units_1', 64), return_sequences=True,
+                 input_shape=input_shape, kernel_regularizer=l2(1e-4)),
             Dropout(self.params.get('dropout', 0.2)),
-            LSTM(self.params.get('lstm_units_2', 32), return_sequences=False),
+            LSTM(self.params.get('lstm_units_2', 32), return_sequences=False,
+                 kernel_regularizer=l2(1e-4)),
             Dropout(self.params.get('dropout', 0.2)),
-            Dense(16, activation='relu'),
+            Dense(8, activation='relu', kernel_regularizer=l2(1e-4)),
             Dense(1, activation='sigmoid')
         ])
 

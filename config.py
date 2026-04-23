@@ -29,39 +29,42 @@ CONFIDENCE_THRESHOLD = 0.55  # 置信度阈值
 
 # 模型参数
 LIGHTGBM_PARAMS = {
-    'n_estimators': 100,
-    'learning_rate': 0.05,
-    'max_depth': 5,
-    'num_leaves': 31,
-    'min_child_samples': 20,
-    'subsample': 0.8,
-    'colsample_bytree': 0.8,
+    'n_estimators': 500,
+    'learning_rate': 0.01,
+    'max_depth': 4,
+    'num_leaves': 15,
+    'min_child_samples': 30,
+    'subsample': 0.7,
+    'colsample_bytree': 0.7,
+    'reg_alpha': 0.1,
+    'reg_lambda': 0.1,
     'random_state': 42,
     'verbose': -1
 }
 
 CATBOOST_PARAMS = {
-    'iterations': 100,
-    'learning_rate': 0.05,
-    'depth': 5,
+    'iterations': 500,
+    'learning_rate': 0.01,
+    'depth': 4,
+    'l2_leaf_reg': 3,
     'random_seed': 42,
     'verbose': False
 }
 
 LSTM_PARAMS = {
     'seq_length': 10,
-    'lstm_units_1': 32,
-    'lstm_units_2': 16,
-    'dropout': 0.4,
-    'epochs': 50,
-    'batch_size': 32,
-    'learning_rate': 0.001
+    'lstm_units_1': 16,
+    'lstm_units_2': 8,
+    'dropout': 0.5,
+    'epochs': 30,
+    'batch_size': 64,
+    'learning_rate': 0.0005
 }
 
 # 数据参数
-TRAIN_START_DATE = '2023-01-01'
+TRAIN_START_DATE = '2021-01-01'
 TRAIN_END_DATE = '2025-12-31'
-DATA_CACHE_DAYS = 7
+DATA_CACHE_DAYS = 3
 
 # Email 配置（需要用户填写）
 EMAIL_CONFIG = {

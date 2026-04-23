@@ -32,19 +32,19 @@ class BacktestEngine:
     def reset(self):
         """重置回测状态"""
         self.capital = self.initial_capital
-        self.position = 0  # 持仓数量
+        self.position = 0  # 持仓数量（兼容旧接口）
         self.trades = []   # 交易记录
         self.portfolio_values = []  # 组合价值历史
         self.buy_hold_values = []   # 买入持有基准
         self.dates = []             # 日期历史
 
-    def run(self, predictions, prices, confidence_threshold=0.55):
+    def run(self, predictions, prices_dict, confidence_threshold=0.55):
         """
-        运行回测
+        运行回测（多股票独立信号，等权资金分配）
 
         参数:
             predictions: DataFrame，列 [date, stock, probability, actual]
-            prices: Series，价格索引为日期
+            prices_dict: dict {stock_code: Series}，每只股票的价格序列
             confidence_threshold: 置信度阈值
 
         返回:
@@ -52,85 +52,130 @@ class BacktestEngine:
         """
         self.reset()
 
+        if predictions.empty or not prices_dict:
+            return {}
+
         # 按日期排序
-        if 'date' in predictions.columns:
-            predictions = predictions.sort_values('date')
+        predictions = predictions.sort_values('date').copy()
+        all_dates = sorted(predictions['date'].unique())
+        stocks = predictions['stock'].unique()
 
-        dates = predictions['date'].unique()
+        # 每只股票的持仓状态
+        positions = {s: 0 for s in stocks}       # 持仓股数
+        buy_prices = {s: 0 for s in stocks}      # 买入价格
+        buy_shares = {s: 0 for s in stocks}       # 买入股数
 
-        for date in dates:
+        # 等权分配：每只股票最多占用 1/N 的资金
+        max_alloc_per_stock = self.initial_capital / max(len(stocks), 1)
+
+        for date in all_dates:
             date_preds = predictions[predictions['date'] == date]
-
-            if len(date_preds) == 0:
+            if date_preds.empty:
                 continue
 
-            # 当日平均预测概率（简化：取平均）
-            avg_prob = date_preds['probability'].mean()
-            actual = date_preds['actual'].iloc[0] if 'actual' in date_preds.columns else None
+            for _, row in date_preds.iterrows():
+                stock = row['stock']
+                prob = row['probability']
 
-            # 获取当日价格
-            if date in prices.index:
-                current_price = prices.loc[date]
-            else:
-                # 找到最接近的日期
-                closest_idx = prices.index.get_indexer([date], method='ffill')[0]
-                if closest_idx < 0:
+                if stock not in prices_dict:
                     continue
-                current_price = prices.iloc[closest_idx]
 
-            # 交易逻辑
-            signal = 1 if avg_prob >= confidence_threshold else 0
+                price_series = prices_dict[stock]
+                # 获取当日价格
+                if date in price_series.index:
+                    current_price = price_series.loc[date]
+                else:
+                    closest_idx = price_series.index.get_indexer([date], method='ffill')[0]
+                    if closest_idx < 0:
+                        continue
+                    current_price = price_series.iloc[closest_idx]
 
-            # 买入
-            if signal == 1 and self.position == 0:
-                buy_price = current_price * (1 + self.slippage)
-                max_shares = int(self.capital / buy_price)
-                if max_shares > 0:
-                    cost = max_shares * buy_price * (1 + self.commission)
-                    if cost <= self.capital:
-                        self.capital -= cost
-                        self.position = max_shares
-                        self.trades.append({
-                            'date': date,
-                            'action': 'BUY',
-                            'price': buy_price,
-                            'shares': max_shares,
-                            'probability': avg_prob,
-                            'actual': actual
-                        })
+                signal = 1 if prob >= confidence_threshold else 0
 
-            # 卖出
-            elif signal == 0 and self.position > 0:
-                sell_price = current_price * (1 - self.slippage)
-                proceeds = self.position * sell_price * (1 - self.commission)
-                profit = proceeds - (self.trades[-1]['shares'] *
-                                     self.trades[-1]['price'] *
-                                     (1 + self.commission))
-                self.trades.append({
-                    'date': date,
-                    'action': 'SELL',
-                    'price': sell_price,
-                    'shares': self.position,
-                    'probability': avg_prob,
-                    'actual': actual,
-                    'profit': profit
-                })
-                self.capital += proceeds
-                self.position = 0
+                # 买入
+                if signal == 1 and positions[stock] == 0:
+                    buy_price = current_price * (1 + self.slippage)
+                    alloc = min(max_alloc_per_stock, self.capital)
+                    max_shares = int(alloc / (buy_price * (1 + self.commission)))
+                    if max_shares > 0:
+                        cost = max_shares * buy_price * (1 + self.commission)
+                        if cost <= self.capital:
+                            self.capital -= cost
+                            positions[stock] = max_shares
+                            buy_prices[stock] = buy_price
+                            buy_shares[stock] = max_shares
+                            self.trades.append({
+                                'date': date,
+                                'stock': stock,
+                                'action': 'BUY',
+                                'price': buy_price,
+                                'shares': max_shares,
+                                'probability': prob,
+                            })
 
-            # 记录组合价值
-            portfolio_value = self.capital + self.position * current_price
+                # 卖出
+                elif signal == 0 and positions[stock] > 0:
+                    sell_price = current_price * (1 - self.slippage)
+                    proceeds = positions[stock] * sell_price * (1 - self.commission)
+                    cost_basis = buy_shares[stock] * buy_prices[stock] * (1 + self.commission)
+                    profit = proceeds - cost_basis
+                    self.trades.append({
+                        'date': date,
+                        'stock': stock,
+                        'action': 'SELL',
+                        'price': sell_price,
+                        'shares': positions[stock],
+                        'probability': prob,
+                        'profit': profit
+                    })
+                    self.capital += proceeds
+                    positions[stock] = 0
+
+            # 记录当日组合价值
+            holdings_value = 0
+            for s in stocks:
+                if positions[s] > 0 and s in prices_dict:
+                    ps = prices_dict[s]
+                    if date in ps.index:
+                        holdings_value += positions[s] * ps.loc[date]
+                    else:
+                        closest_idx = ps.index.get_indexer([date], method='ffill')[0]
+                        if closest_idx >= 0:
+                            holdings_value += positions[s] * ps.iloc[closest_idx]
+
+            portfolio_value = self.capital + holdings_value
             self.portfolio_values.append(portfolio_value)
-            self.buy_hold_values.append(self.initial_capital * (current_price / prices.iloc[0]
-                                                                 if len(self.buy_hold_values) == 0
-                                                                 else self.buy_hold_values[-1] / prices.iloc[0] * current_price))
             self.dates.append(date)
 
+        # 买入持有基准：等权买入所有股票并持有
+        if prices_dict:
+            ref_stocks = list(prices_dict.keys())[:len(stocks)]
+            first_prices = {}
+            for s in ref_stocks:
+                ps = prices_dict[s]
+                if len(ps) > 0:
+                    first_prices[s] = ps.iloc[0]
+            for date in all_dates:
+                bh_value = 0
+                for s in ref_stocks:
+                    ps = prices_dict[s]
+                    if date in ps.index:
+                        bh_value += (self.initial_capital / len(ref_stocks)) * (ps.loc[date] / first_prices.get(s, 1))
+                    else:
+                        closest_idx = ps.index.get_indexer([date], method='ffill')[0]
+                        if closest_idx >= 0:
+                            bh_value += (self.initial_capital / len(ref_stocks)) * (ps.iloc[closest_idx] / first_prices.get(s, 1))
+                self.buy_hold_values.append(bh_value)
+
         # 如果还有持仓，按最后价格计算
-        if self.position > 0:
-            final_price = prices.iloc[-1]
-            portfolio_value = self.capital + self.position * final_price
-            self.portfolio_values[-1] = portfolio_value
+        if any(positions[s] > 0 for s in stocks):
+            for s in stocks:
+                if positions[s] > 0 and s in prices_dict:
+                    ps = prices_dict[s]
+                    if len(ps) > 0:
+                        self.capital += positions[s] * ps.iloc[-1] * (1 - self.slippage) * (1 - self.commission)
+                        positions[s] = 0
+            self.portfolio_values[-1] = self.capital
 
         return self.calculate_metrics()
 
@@ -219,7 +264,7 @@ class BacktestEngine:
         ax1.plot(dates, benchmark_values, label='Buy & Hold', linewidth=2, alpha=0.7)
         ax1.set_title('Portfolio Value Comparison')
         ax1.set_xlabel('Date')
-        ax1.set_ylabel('Value (HK$)')
+        ax1.set_ylabel('Value (¥)')
         ax1.legend()
         ax1.grid(True)
 
@@ -263,7 +308,7 @@ class BacktestEngine:
 
         Total Trades:      {metrics['total_trades']}
         Winning Trades:    {metrics['winning_trades']}
-        Final Capital:     HK${metrics['final_capital']:,.2f}
+        Final Capital:     ¥{metrics['final_capital']:,.2f}
         """
 
         ax4.text(0.1, 0.5, metrics_text, fontsize=12, family='monospace',
@@ -292,9 +337,11 @@ if __name__ == '__main__':
         'actual': (np.random.rand(len(dates)) > 0.5).astype(int)
     })
 
+    prices_dict = {'TEST': prices}
+
     # 运行回测
     engine = BacktestEngine(initial_capital=100000)
-    results = engine.run(predictions, prices, confidence_threshold=0.55)
+    results = engine.run(predictions, prices_dict, confidence_threshold=0.55)
 
     print(f"\n回测结果:")
     print(f"总收益率: {results['total_return']*100:.2f}%")
