@@ -67,19 +67,16 @@ def run_training(horizon, test_ratio=0.2):
     stock_data = load_multiple_stocks(STOCK_LIST, TRAIN_START_DATE, TRAIN_END_DATE)
     print(f"✓ 成功加载 {len(stock_data)} 只股票")
 
-    # 合并数据
-    X, y, stock_codes = combine_multiple_stocks(stock_data, horizon)
-    if X.empty:
+    # 合并数据（按股票分别划分，避免时序泄露）
+    X_train, y_train, X_test, y_test, stock_codes = combine_multiple_stocks(
+        stock_data, horizon, test_ratio=test_ratio
+    )
+    if X_train.empty:
         print("⚠️ 训练数据为空")
         return {}
 
-    print(f"✓ 样本: {len(X)}, 特征: {X.shape[1]}")
-    print(f"✓ 正样本比例: {y.mean():.2%}")
-
-    # 时序划分
-    split_idx = int(len(X) * (1 - test_ratio))
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+    print(f"✓ 训练样本: {len(X_train)}, 测试样本: {len(X_test)}, 特征: {X_train.shape[1]}")
+    print(f"✓ 正样本比例: {y_train.mean():.2%}")
 
     results = {}
 
@@ -89,7 +86,7 @@ def run_training(horizon, test_ratio=0.2):
         lgbm = LightGBMModel()
         lgbm.train(X_train, y_train, X_test, y_test)
         lgbm_metrics = evaluate_model(lgbm, X_test, y_test)
-        lgbm.feature_columns = X.columns.tolist()
+        lgbm.feature_columns = X_train.columns.tolist()
         lgbm.save('models/lgbm_model.pkl')
         results['LightGBM'] = {'model': lgbm, 'metrics': lgbm_metrics}
         print(f"   准确率: {lgbm_metrics['accuracy']:.4f}, AUC: {lgbm_metrics['auc']:.4f}")
@@ -102,7 +99,7 @@ def run_training(horizon, test_ratio=0.2):
         catboost = CatBoostModel()
         catboost.train(X_train, y_train, X_test, y_test)
         catboost_metrics = evaluate_model(catboost, X_test, y_test)
-        catboost.feature_columns = X.columns.tolist()
+        catboost.feature_columns = X_train.columns.tolist()
         catboost.save('models/catboost_model.pkl')
         results['CatBoost'] = {'model': catboost, 'metrics': catboost_metrics}
         print(f"   准确率: {catboost_metrics['accuracy']:.4f}, AUC: {catboost_metrics['auc']:.4f}")
@@ -112,10 +109,10 @@ def run_training(horizon, test_ratio=0.2):
     # LSTM
     print("\n3️⃣ 训练 LSTM...")
     try:
-        lstm = LSTMModel(seq_length=20)
+        lstm = LSTMModel(seq_length=10)
         lstm.train(X_train, y_train, X_test, y_test)
         lstm_metrics = evaluate_model(lstm, X_test, y_test)
-        lstm.feature_columns = X.columns.tolist()
+        lstm.feature_columns = X_train.columns.tolist()
         lstm.save('models/lstm_model.keras')
         results['LSTM'] = {'model': lstm, 'metrics': lstm_metrics}
         print(f"   准确率: {lstm_metrics['accuracy']:.4f}, AUC: {lstm_metrics['auc']:.4f}")
@@ -230,12 +227,12 @@ def run_prediction(models, horizon, feature_columns=None):
     return predictions_df
 
 
-def run_backtest(predictions_df, horizon):
+def run_backtest(model_results, horizon):
     """
-    运行回测流程
+    运行回测流程：对回测期内每个交易日生成预测，模拟真实交易
 
     参数:
-        predictions_df: 预测结果
+        model_results: 模型结果字典 {name: {'model': ..., 'metrics': ...}}
         horizon: 预测周期
 
     返回:
@@ -245,30 +242,110 @@ def run_backtest(predictions_df, horizon):
     print(f"# 阶段3: 回测评估")
     print(f"{'#'*60}\n")
 
-    # 加载测试期数据
+    # 加载回测期数据（最近6个月）
     print("📥 加载回测数据...")
     test_end = datetime.now().strftime('%Y-%m-%d')
-    test_start = (datetime.now() - timedelta(days=horizon * 3)).strftime('%Y-%m-%d')
+    test_start = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
 
     stock_data = load_multiple_stocks(STOCK_LIST, test_start, test_end)
 
-    # 合并所有股票价格
-    all_prices = pd.concat([df['Close'] for df in stock_data.values()], axis=1).mean(axis=1)
-
-    if predictions_df.empty or len(all_prices) < 50:
+    if not stock_data:
         print("⚠️ 数据不足，跳过回测")
         return {}
 
+    # 合并所有股票价格（等权平均作为基准）
+    price_dfs = []
+    for code, df in stock_data.items():
+        if not df.empty:
+            price_dfs.append(df['Close'])
+    if not price_dfs:
+        print("⚠️ 数据不足，跳过回测")
+        return {}
+    all_prices = pd.concat(price_dfs, axis=1).mean(axis=1)
+
+    # 对每只股票生成回测预测
+    engineer = FeatureEngineer()
+    backtest_rows = []
+
+    for code, df in stock_data.items():
+        if df.empty or len(df) < 30:
+            continue
+
+        # 使用与训练完全相同的 prepare_features 流程
+        X, y, feat_cols = engineer.prepare_features(df, horizon, dropna=False)
+        if X.empty:
+            continue
+
+        # 计算真实标签（未来 horizon 天是否上涨），与 X 的 index 对齐
+        close_for_label = df['Close'].reindex(X.index)
+        future_return = close_for_label.shift(-horizon) / close_for_label - 1
+        actual_labels = (future_return > 0).astype(int)
+        actual_labels.iloc[-horizon:] = -1
+
+        # 对每个模型预测
+        for model_name, model_res in model_results.items():
+            try:
+                model_obj = model_res.get('model', model_res) if isinstance(model_res, dict) else model_res
+
+                if model_name == 'LSTM':
+                    # LSTM: 需要序列输入
+                    seq_length = getattr(model_obj, 'seq_length', 10)
+                    fc = model_obj.feature_columns if hasattr(model_obj, 'feature_columns') and model_obj.feature_columns else feat_cols
+                    X_lstm = X[[c for c in fc if c in X.columns]].fillna(0)
+                    X_scaled = model_obj.scaler.transform(X_lstm.values)
+                    if len(X_scaled) < seq_length:
+                        continue
+                    X_seq, _ = model_obj._create_sequences(X_scaled)
+                    probs = model_obj.model.predict(X_seq, verbose=0).flatten()
+                    # LSTM 输出比输入少 seq_length 行
+                    for i in range(len(probs)):
+                        data_idx = i + seq_length
+                        if data_idx >= len(X) or actual_labels.iloc[data_idx] == -1:
+                            continue
+                        backtest_rows.append({
+                            'stock': code,
+                            'date': X.index[data_idx],
+                            'probability': float(probs[i]),
+                            'actual': int(actual_labels.iloc[data_idx]),
+                            'model': model_name,
+                        })
+                else:
+                    # Tree models: 批量预测
+                    fc = model_obj.feature_columns if hasattr(model_obj, 'feature_columns') and model_obj.feature_columns else feat_cols
+                    X_tree = X[[c for c in fc if c in X.columns]].fillna(0)
+                    probs = model_obj.predict(X_tree.values)
+                    if hasattr(probs, '__len__') and len(probs) > 1:
+                        probs = probs.flatten()
+                    else:
+                        probs = np.full(len(X_tree), float(probs))
+                    for i in range(len(probs)):
+                        if actual_labels.iloc[i] == -1:
+                            continue
+                        backtest_rows.append({
+                            'stock': code,
+                            'date': X.index[i],
+                            'probability': float(probs[i]),
+                            'actual': int(actual_labels.iloc[i]),
+                            'model': model_name,
+                        })
+            except Exception as e:
+                print(f"   ⚠️ {model_name} 回测预测失败({code}): {type(e).__name__}: {e}")
+
+    if not backtest_rows:
+        print("⚠️ 回测数据不足，跳过回测")
+        return {}
+
+    # 合并多模型预测：同一(股票,日期)取平均
+    backtest_df = pd.DataFrame(backtest_rows)
+    merged = backtest_df.groupby(['stock', 'date']).agg({
+        'probability': 'mean',
+        'actual': 'first',
+    }).reset_index()
+    print(f"✓ 生成 {len(merged)} 条回测预测记录（来自 {len(backtest_rows)} 条原始预测）")
+
     # 运行回测
     engine = BacktestEngine(initial_capital=100000)
-
-    # 构造回测数据
-    backtest_data = predictions_df.copy()
-    backtest_data['actual'] = backtest_data['probability'].apply(
-        lambda x: 1 if x > 0.5 else 0  # 简化：假设预测>0.5就是实际会涨
-    )
-
-    results = engine.run(backtest_data, all_prices)
+    results = engine.run(merged, all_prices, confidence_threshold=0.50)
 
     print(f"\n回测结果:")
     print(f"  总收益率:   {results['total_return']*100:.2f}%")
@@ -414,8 +491,8 @@ def main():
     # 回测
     backtest_results = {}
     if args.mode in ['full', 'backtest']:
-        if not predictions_df.empty:
-            backtest_results = run_backtest(predictions_df, args.horizon)
+        if model_results:
+            backtest_results = run_backtest(model_results, args.horizon)
 
     # 报告
     if args.mode in ['full', 'report']:

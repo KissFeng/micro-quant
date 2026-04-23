@@ -13,9 +13,9 @@ STOCK_LIST = {
     '600519.SH': '贵州茅台',      # 白酒
     '600887.SH': '伊利股份',      # 乳业
     '601318.SH': '中国平安',      # 保险
-    '000858.SZ': '五粮液',        # 白酒
     '601888.SH': '中国中免',      # 免税
     '002594.SZ': '比亚迪',        # 新能源车
+    '000651.SZ': '格力电器',      # 家电
 }
 
 # 预测周期（天）
@@ -49,17 +49,17 @@ CATBOOST_PARAMS = {
 }
 
 LSTM_PARAMS = {
-    'seq_length': 20,
-    'lstm_units_1': 64,
-    'lstm_units_2': 32,
-    'dropout': 0.2,
+    'seq_length': 10,
+    'lstm_units_1': 32,
+    'lstm_units_2': 16,
+    'dropout': 0.4,
     'epochs': 50,
     'batch_size': 32,
     'learning_rate': 0.001
 }
 
 # 数据参数
-TRAIN_START_DATE = '2024-01-01'
+TRAIN_START_DATE = '2023-01-01'
 TRAIN_END_DATE = '2025-12-31'
 DATA_CACHE_DAYS = 7
 

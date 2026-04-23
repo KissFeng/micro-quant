@@ -74,10 +74,12 @@ class BacktestEngine:
             else:
                 # 找到最接近的日期
                 closest_idx = prices.index.get_indexer([date], method='ffill')[0]
+                if closest_idx < 0:
+                    continue
                 current_price = prices.iloc[closest_idx]
 
             # 交易逻辑
-            signal = 1 if avg_prob > confidence_threshold else 0
+            signal = 1 if avg_prob >= confidence_threshold else 0
 
             # 买入
             if signal == 1 and self.position == 0:

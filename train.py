@@ -62,23 +62,18 @@ def train_models(stock_data, horizon, test_ratio=0.2):
     print(f"开始训练 - 预测周期: {horizon}天")
     print(f"{'='*60}\n")
 
-    # 合并多只股票数据
+    # 合并多只股票数据（按股票分别划分，避免时序泄露）
     print("📊 准备训练数据...")
-    X, y, stock_codes = combine_multiple_stocks(stock_data, horizon)
+    X_train, y_train, X_test, y_test, stock_codes = combine_multiple_stocks(
+        stock_data, horizon, test_ratio=test_ratio
+    )
 
-    if X.empty:
+    if X_train.empty:
         print("⚠️ 训练数据为空")
         return {}
 
-    print(f"✓ 样本数量: {len(X)}, 特征数量: {X.shape[1]}")
-    print(f"✓ 正样本比例: {y.mean():.2%}")
-
-    # 划分训练集和测试集（时序划分）
-    split_idx = int(len(X) * (1 - test_ratio))
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-
-    print(f"✓ 训练集: {len(X_train)}, 测试集: {len(X_test)}")
+    print(f"✓ 训练集: {len(X_train)}, 测试集: {len(X_test)}, 特征数量: {X_train.shape[1]}")
+    print(f"✓ 正样本比例: {y_train.mean():.2%}")
 
     results = {}
 
@@ -94,13 +89,13 @@ def train_models(stock_data, horizon, test_ratio=0.2):
         print(f"LightGBM 准确率: {lgbm_metrics['accuracy']:.4f}, AUC: {lgbm_metrics['auc']:.4f}")
 
         # 保存模型
-        lgbm.feature_columns = X.columns.tolist()
+        lgbm.feature_columns = X_train.columns.tolist()
         lgbm.save(f'{MODEL_DIR}/lgbm_model.pkl')
 
         results['LightGBM'] = {
             'model': lgbm,
             'metrics': lgbm_metrics,
-            'feature_columns': X.columns.tolist()
+            'feature_columns': X_train.columns.tolist()
         }
     except Exception as e:
         print(f"⚠️ LightGBM 训练失败: {e}")
@@ -117,13 +112,13 @@ def train_models(stock_data, horizon, test_ratio=0.2):
         print(f"CatBoost 准确率: {catboost_metrics['accuracy']:.4f}, AUC: {catboost_metrics['auc']:.4f}")
 
         # 保存模型
-        catboost.feature_columns = X.columns.tolist()
+        catboost.feature_columns = X_train.columns.tolist()
         catboost.save(f'{MODEL_DIR}/catboost_model.pkl')
 
         results['CatBoost'] = {
             'model': catboost,
             'metrics': catboost_metrics,
-            'feature_columns': X.columns.tolist()
+            'feature_columns': X_train.columns.tolist()
         }
     except Exception as e:
         print(f"⚠️ CatBoost 训练失败: {e}")
@@ -134,19 +129,19 @@ def train_models(stock_data, horizon, test_ratio=0.2):
     print(f"{'='*40}")
 
     try:
-        lstm = LSTMModel(seq_length=20)
+        lstm = LSTMModel(seq_length=10)
         lstm.train(X_train, y_train, X_test, y_test)
         lstm_metrics = evaluate_model(lstm, X_test, y_test)
         print(f"LSTM 准确率: {lstm_metrics['accuracy']:.4f}, AUC: {lstm_metrics['auc']:.4f}")
 
         # 保存模型
-        lstm.feature_columns = X.columns.tolist()
+        lstm.feature_columns = X_train.columns.tolist()
         lstm.save(f'{MODEL_DIR}/lstm_model.keras')
 
         results['LSTM'] = {
             'model': lstm,
             'metrics': lstm_metrics,
-            'feature_columns': X.columns.tolist()
+            'feature_columns': X_train.columns.tolist()
         }
     except Exception as e:
         print(f"⚠️ LSTM 训练失败: {e}")

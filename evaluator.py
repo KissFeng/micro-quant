@@ -33,6 +33,10 @@ def evaluate_model(model, X_test, y_test, prices_test=None, confidence_threshold
     # 预测
     if hasattr(model, 'model_type') and model.model_type == 'lstm':
         y_pred_proba = model.predict(X_test)
+        # LSTM predict 输出长度 = len(X) - seq_length，需要对齐 y_test
+        seq_length = getattr(model, 'seq_length', 20)
+        if len(y_pred_proba) < len(y_test):
+            y_test = y_test.iloc[-len(y_pred_proba):] if hasattr(y_test, 'iloc') else y_test[-len(y_pred_proba):]
     else:
         y_pred_proba = model.predict(X_test)
 

@@ -106,12 +106,20 @@ class LSTMModel:
             X_val_seq, y_val_seq = self._create_sequences(X_val_scaled, y_val)
             validation_data = (X_val_seq, y_val_seq)
 
+        # 计算类别权重以处理类别不平衡
+        unique, counts = np.unique(y_seq, return_counts=True)
+        class_weight = None
+        if len(unique) == 2:
+            total = len(y_seq)
+            class_weight = {int(c): total / (2 * cnt) for c, cnt in zip(unique, counts)}
+
         self.model.fit(
             X_seq, y_seq,
             epochs=self.params.get('epochs', 50),
             batch_size=self.params.get('batch_size', 32),
             validation_data=validation_data,
             callbacks=callbacks if validation_data else [callbacks[0]],
+            class_weight=class_weight,
             verbose=1
         )
 

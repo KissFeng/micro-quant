@@ -201,36 +201,47 @@ class FeatureEngineer:
         return self.feature_columns
 
 
-def combine_multiple_stocks(stock_data_dict, horizon=5):
+def combine_multiple_stocks(stock_data_dict, horizon=5, test_ratio=0.2):
     """
-    合并多只股票的数据
+    合并多只股票的数据，按时间顺序划分训练集和测试集
 
     参数:
         stock_data_dict: {stock_code: DataFrame}
         horizon: 预测周期
+        test_ratio: 测试集比例
 
     返回:
-        tuple: (X, y, stock_codes)
+        tuple: (X_train, y_train, X_test, y_test, stock_codes)
     """
     engineer = FeatureEngineer()
-    all_X = []
-    all_y = []
+    train_X_list = []
+    train_y_list = []
+    test_X_list = []
+    test_y_list = []
     stock_codes = []
 
     for code, df in stock_data_dict.items():
         X, y, _ = engineer.prepare_features(df, horizon)
-        if not X.empty:
-            all_X.append(X)
-            all_y.append(y)
-            stock_codes.append(code)
+        if X.empty or len(X) < 30:
+            continue
 
-    if not all_X:
-        return pd.DataFrame(), pd.Series(), []
+        # 按时间顺序划分：前 80% 训练，后 20% 测试
+        split_idx = int(len(X) * (1 - test_ratio))
+        train_X_list.append(X.iloc[:split_idx])
+        train_y_list.append(y.iloc[:split_idx])
+        test_X_list.append(X.iloc[split_idx:])
+        test_y_list.append(y.iloc[split_idx:])
+        stock_codes.append(code)
 
-    X_combined = pd.concat(all_X, axis=0, ignore_index=True)
-    y_combined = pd.concat(all_y, axis=0, ignore_index=True)
+    if not train_X_list:
+        return pd.DataFrame(), pd.Series(), pd.DataFrame(), pd.Series(), []
 
-    return X_combined, y_combined, stock_codes
+    X_train = pd.concat(train_X_list, axis=0, ignore_index=True)
+    y_train = pd.concat(train_y_list, axis=0, ignore_index=True)
+    X_test = pd.concat(test_X_list, axis=0, ignore_index=True)
+    y_test = pd.concat(test_y_list, axis=0, ignore_index=True)
+
+    return X_train, y_train, X_test, y_test, stock_codes
 
 
 if __name__ == '__main__':
