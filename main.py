@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore')
 # 添加项目根目录
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import STOCK_LIST, DEFAULT_HORIZON, TRAIN_START_DATE, TRAIN_END_DATE
+from config import STOCK_LIST, DEFAULT_HORIZON, TRAIN_START_DATE, TRAIN_END_DATE, LSTM_PARAMS
 from data_loader import load_multiple_stocks, load_index_data
 from feature_engineering import combine_multiple_stocks, FeatureEngineer
 from models import LightGBMModel, CatBoostModel, LSTMModel
@@ -112,7 +112,7 @@ def run_training(horizon, test_ratio=0.2):
     # LSTM
     print("\n3️⃣ 训练 LSTM...")
     try:
-        lstm = LSTMModel(seq_length=10)
+        lstm = LSTMModel(seq_length=LSTM_PARAMS.get('seq_length', 5))
         lstm.train(X_train, y_train, X_test, y_test)
         lstm_metrics = evaluate_model(lstm, X_test, y_test)
         lstm.feature_columns = X_train.columns.tolist()
@@ -176,22 +176,29 @@ def run_prediction(models, horizon, feature_columns=None):
         current_price = df['Close'].iloc[-1]
         current_date = df.index[-1]
 
-        # 各模型预测
+        # 各模型预测（只用AUC>0.52的模型）
         model_probs = {}
+        model_aucs = {}
         for model_name, model_res in models.items():
             try:
-                # model_res 可能是嵌套字典 {'model': xxx} 或直接是模型对象
+                # model_res 可能是嵌套字典 {'model': xxx, 'metrics': xxx} 或直接是模型对象
                 if isinstance(model_res, dict):
                     model_obj = model_res.get('model', model_res)
+                    model_auc = model_res.get('metrics', {}).get('auc', 0.5)
                 else:
                     model_obj = model_res
+                    model_auc = 0.5
+
+                # 跳过弱模型（AUC < 0.52）
+                effective_auc = max(model_auc, 1 - model_auc)
+                if effective_auc < 0.52:
+                    continue
 
                 if model_name == 'LSTM':
                     # LSTM 需要特殊处理
                     X_scaled = model_obj.scaler.transform(X.values)
                     X_seq, _ = model_obj._create_sequences(X_scaled)
                     prob = model_obj.model.predict(X_seq, verbose=0).flatten()[-1]
-                    model_probs[model_name] = float(prob)
                 else:
                     # LGBM/CatBoost
                     if hasattr(model_obj, 'feature_columns') and model_obj.feature_columns:
@@ -202,12 +209,21 @@ def run_prediction(models, horizon, feature_columns=None):
                     prob = model_obj.predict(X_values)
                     if hasattr(prob, '__len__'):
                         prob = prob[0]
-                    model_probs[model_name] = float(prob)
+
+                prob = float(prob)
+                # 反预测修复：AUC < 0.5 时反转概率
+                if model_auc < 0.5:
+                    prob = 1 - prob
+                model_probs[model_name] = prob
+                model_aucs[model_name] = max(model_auc, 1 - model_auc)  # 反转后的有效AUC
             except Exception as e:
                 print(f"   Warning: {model_name} prediction failed: {e}")
 
         if model_probs:
-            avg_prob = np.mean(list(model_probs.values()))
+            # AUC加权集成（AUC越高权重越大）
+            weights = {k: max(v, 0.01) for k, v in model_aucs.items()}
+            total_w = sum(weights.values())
+            avg_prob = sum(model_probs[k] * weights[k] for k in model_probs) / total_w
             predictions_list.append({
                 'stock': code,
                 'name': STOCK_LIST.get(code, code),
@@ -298,14 +314,23 @@ def run_backtest(model_results, horizon):
         actual_labels = (future_return > 0).astype(int)
         actual_labels.iloc[-horizon:] = -1
 
-        # 对每个模型预测
+        # 对每个模型预测（只用AUC>0.52的模型）
         for model_name, model_res in model_results.items():
             try:
                 model_obj = model_res.get('model', model_res) if isinstance(model_res, dict) else model_res
+                model_auc = model_res.get('metrics', {}).get('auc', 0.5) if isinstance(model_res, dict) else 0.5
+
+                # 跳过弱模型
+                effective_auc = max(model_auc, 1 - model_auc)
+                if effective_auc < 0.52:
+                    continue
+
+                # 反预测修复
+                invert = model_auc < 0.5
 
                 if model_name == 'LSTM':
                     # LSTM: 需要序列输入
-                    seq_length = getattr(model_obj, 'seq_length', 10)
+                    seq_length = getattr(model_obj, 'seq_length', 5)
                     fc = model_obj.feature_columns if hasattr(model_obj, 'feature_columns') and model_obj.feature_columns else feat_cols
                     X_lstm = X[[c for c in fc if c in X.columns]].fillna(0)
                     X_scaled = model_obj.scaler.transform(X_lstm.values)
@@ -313,6 +338,8 @@ def run_backtest(model_results, horizon):
                         continue
                     X_seq, _ = model_obj._create_sequences(X_scaled)
                     probs = model_obj.model.predict(X_seq, verbose=0).flatten()
+                    if invert:
+                        probs = 1 - probs
                     # LSTM 输出比输入少 seq_length 行
                     for i in range(len(probs)):
                         data_idx = i + seq_length
@@ -334,6 +361,8 @@ def run_backtest(model_results, horizon):
                         probs = probs.flatten()
                     else:
                         probs = np.full(len(X_tree), float(probs))
+                    if invert:
+                        probs = 1 - probs
                     for i in range(len(probs)):
                         if actual_labels.iloc[i] == -1:
                             continue
@@ -351,12 +380,34 @@ def run_backtest(model_results, horizon):
         print("⚠️ 回测数据不足，跳过回测")
         return {}
 
-    # 合并多模型预测：同一(股票,日期)取平均
+    # 合并多模型预测：AUC加权平均
     backtest_df = pd.DataFrame(backtest_rows)
-    merged = backtest_df.groupby(['stock', 'date']).agg({
-        'probability': 'mean',
-        'actual': 'first',
-    }).reset_index()
+
+    # 计算每个模型的权重（基于AUC）
+    model_aucs = {}
+    for model_name, model_res in model_results.items():
+        if isinstance(model_res, dict):
+            auc = model_res.get('metrics', {}).get('auc', 0.5)
+            model_aucs[model_name] = max(auc, 1 - auc)  # 反转后的有效AUC
+        else:
+            model_aucs[model_name] = 0.5
+
+    # 给每行预测添加权重
+    backtest_df['weight'] = backtest_df['model'].map(model_aucs).fillna(0.5)
+
+    # 加权平均
+    def weighted_avg(probs, weights):
+        total_w = weights.sum()
+        if total_w == 0:
+            return probs.mean()
+        return (probs * weights).sum() / total_w
+
+    merged = backtest_df.groupby(['stock', 'date']).apply(
+        lambda g: pd.Series({
+            'probability': weighted_avg(g['probability'], g['weight']),
+            'actual': g['actual'].iloc[0],
+        })
+    ).reset_index()
     print(f"✓ 生成 {len(merged)} 条回测预测记录（来自 {len(backtest_rows)} 条原始预测）")
 
     # 运行回测

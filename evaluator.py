@@ -40,6 +40,11 @@ def evaluate_model(model, X_test, y_test, prices_test=None, confidence_threshold
     else:
         y_pred_proba = model.predict(X_test)
 
+    # 反预测修复：如果 AUC < 0.5，反转概率
+    raw_auc = roc_auc_score(y_test, y_pred_proba)
+    if raw_auc < 0.5:
+        y_pred_proba = 1 - y_pred_proba
+
     y_pred = (y_pred_proba > 0.5).astype(int)
 
     # 计算分类指标

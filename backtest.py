@@ -38,14 +38,21 @@ class BacktestEngine:
         self.buy_hold_values = []   # 买入持有基准
         self.dates = []             # 日期历史
 
-    def run(self, predictions, prices_dict, confidence_threshold=0.55):
+    def run(self, predictions, prices_dict, confidence_threshold=0.55, min_hold_days=5):
         """
-        运行回测（多股票独立信号，等权资金分配）
+        运行回测（低频交易策略）
+
+        信号逻辑：
+        - 每日按概率排名，只买入概率最高的前 top_k 只股票
+        - 最低持仓 min_hold_days 天，期间不卖出
+        - 持仓超过 min_hold_days 后，如果不在 top_k 中则卖出
+        - 每只股票最多占用 1/top_k 的资金
 
         参数:
             predictions: DataFrame，列 [date, stock, probability, actual]
             prices_dict: dict {stock_code: Series}，每只股票的价格序列
-            confidence_threshold: 置信度阈值
+            confidence_threshold: 未使用（保留兼容）
+            min_hold_days: 最低持仓天数
 
         返回:
             dict: 回测结果
@@ -61,17 +68,28 @@ class BacktestEngine:
         stocks = predictions['stock'].unique()
 
         # 每只股票的持仓状态
-        positions = {s: 0 for s in stocks}       # 持仓股数
-        buy_prices = {s: 0 for s in stocks}      # 买入价格
-        buy_shares = {s: 0 for s in stocks}       # 买入股数
+        positions = {s: 0 for s in stocks}
+        buy_prices = {s: 0 for s in stocks}
+        buy_shares = {s: 0 for s in stocks}
+        buy_dates = {s: None for s in stocks}  # 买入日期
 
-        # 等权分配：每只股票最多占用 1/N 的资金
-        max_alloc_per_stock = self.initial_capital / max(len(stocks), 1)
+        # 只买前3只（降低交易频率）
+        top_k = min(3, max(len(stocks) // 3, 1))
+        max_alloc_per_stock = self.initial_capital / max(top_k, 1)
+
+        # 建立日期索引，方便计算持仓天数
+        date_to_idx = {d: i for i, d in enumerate(all_dates)}
 
         for date in all_dates:
             date_preds = predictions[predictions['date'] == date]
             if date_preds.empty:
                 continue
+
+            # 按概率排名，取前 top_k 只
+            date_preds_sorted = date_preds.sort_values('probability', ascending=False)
+            top_stocks = set(date_preds_sorted.head(top_k)['stock'].tolist())
+
+            current_date_idx = date_to_idx[date]
 
             for _, row in date_preds.iterrows():
                 stock = row['stock']
@@ -90,10 +108,8 @@ class BacktestEngine:
                         continue
                     current_price = price_series.iloc[closest_idx]
 
-                signal = 1 if prob >= confidence_threshold else 0
-
-                # 买入
-                if signal == 1 and positions[stock] == 0:
+                # 买入：概率排名前 top_k 且当前未持仓
+                if stock in top_stocks and positions[stock] == 0:
                     buy_price = current_price * (1 + self.slippage)
                     alloc = min(max_alloc_per_stock, self.capital)
                     max_shares = int(alloc / (buy_price * (1 + self.commission)))
@@ -104,6 +120,7 @@ class BacktestEngine:
                             positions[stock] = max_shares
                             buy_prices[stock] = buy_price
                             buy_shares[stock] = max_shares
+                            buy_dates[stock] = current_date_idx
                             self.trades.append({
                                 'date': date,
                                 'stock': stock,
@@ -113,23 +130,26 @@ class BacktestEngine:
                                 'probability': prob,
                             })
 
-                # 卖出
-                elif signal == 0 and positions[stock] > 0:
-                    sell_price = current_price * (1 - self.slippage)
-                    proceeds = positions[stock] * sell_price * (1 - self.commission)
-                    cost_basis = buy_shares[stock] * buy_prices[stock] * (1 + self.commission)
-                    profit = proceeds - cost_basis
-                    self.trades.append({
-                        'date': date,
-                        'stock': stock,
-                        'action': 'SELL',
-                        'price': sell_price,
-                        'shares': positions[stock],
-                        'probability': prob,
-                        'profit': profit
-                    })
-                    self.capital += proceeds
-                    positions[stock] = 0
+                # 卖出：不在 top_k 中 且 持仓超过 min_hold_days
+                elif positions[stock] > 0 and stock not in top_stocks:
+                    hold_days = current_date_idx - buy_dates[stock] if buy_dates[stock] is not None else min_hold_days
+                    if hold_days >= min_hold_days:
+                        sell_price = current_price * (1 - self.slippage)
+                        proceeds = positions[stock] * sell_price * (1 - self.commission)
+                        cost_basis = buy_shares[stock] * buy_prices[stock] * (1 + self.commission)
+                        profit = proceeds - cost_basis
+                        self.trades.append({
+                            'date': date,
+                            'stock': stock,
+                            'action': 'SELL',
+                            'price': sell_price,
+                            'shares': positions[stock],
+                            'probability': prob,
+                            'profit': profit
+                        })
+                        self.capital += proceeds
+                        positions[stock] = 0
+                        buy_dates[stock] = None
 
             # 记录当日组合价值
             holdings_value = 0
@@ -167,13 +187,26 @@ class BacktestEngine:
                             bh_value += (self.initial_capital / len(ref_stocks)) * (ps.iloc[closest_idx] / first_prices.get(s, 1))
                 self.buy_hold_values.append(bh_value)
 
-        # 如果还有持仓，按最后价格计算
+        # 如果还有持仓，按最后价格清算
         if any(positions[s] > 0 for s in stocks):
             for s in stocks:
                 if positions[s] > 0 and s in prices_dict:
                     ps = prices_dict[s]
                     if len(ps) > 0:
-                        self.capital += positions[s] * ps.iloc[-1] * (1 - self.slippage) * (1 - self.commission)
+                        sell_price = ps.iloc[-1] * (1 - self.slippage)
+                        proceeds = positions[s] * sell_price * (1 - self.commission)
+                        cost_basis = buy_shares[s] * buy_prices[s] * (1 + self.commission)
+                        profit = proceeds - cost_basis
+                        self.trades.append({
+                            'date': self.dates[-1] if self.dates else '',
+                            'stock': s,
+                            'action': 'SELL',
+                            'price': sell_price,
+                            'shares': positions[s],
+                            'probability': 0,
+                            'profit': profit
+                        })
+                        self.capital += proceeds
                         positions[s] = 0
             self.portfolio_values[-1] = self.capital
 
@@ -218,7 +251,8 @@ class BacktestEngine:
 
         # 胜率
         winning_trades = [t for t in self.trades if t.get('profit', 0) > 0]
-        win_rate = len(winning_trades) / len([t for t in self.trades if 'profit' in t]) if self.trades else 0
+        closed_trades = [t for t in self.trades if 'profit' in t]
+        win_rate = len(winning_trades) / len(closed_trades) if closed_trades else 0
 
         # 交易次数
         total_trades = len([t for t in self.trades if 'profit' in t])

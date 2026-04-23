@@ -4,7 +4,7 @@
 配置文件 - 资金量化系统
 """
 
-# 股票列表（10只自选股，可替换为A股代码如 '000001.SZ'）
+# 股票列表（20只自选股，覆盖更多行业）
 STOCK_LIST = {
     '000001.SZ': '平安银行',      # 银行
     '000002.SZ': '万科A',        # 房地产
@@ -16,6 +16,16 @@ STOCK_LIST = {
     '601888.SH': '中国中免',      # 免税
     '002594.SZ': '比亚迪',        # 新能源车
     '000651.SZ': '格力电器',      # 家电
+    '600276.SH': '恒瑞医药',      # 医药
+    '000333.SZ': '美的集团',      # 家电
+    '601012.SH': '隆基绿能',      # 光伏
+    '600900.SH': '长江电力',      # 电力
+    '000568.SZ': '泸州老窖',      # 白酒
+    '002415.SZ': '海康威视',      # 安防
+    '600809.SH': '山西汾酒',      # 白酒
+    '601899.SH': '紫金矿业',      # 矿业
+    '002230.SZ': '科大讯飞',      # AI
+    '600030.SH': '中信证券',      # 券商
 }
 
 # 预测周期（天）
@@ -31,8 +41,8 @@ CONFIDENCE_THRESHOLD = 0.55  # 置信度阈值
 LIGHTGBM_PARAMS = {
     'objective': 'binary',
     'metric': 'binary_logloss',
-    'n_estimators': 500,
-    'learning_rate': 0.02,
+    'n_estimators': 200,
+    'learning_rate': 0.1,
     'max_depth': 4,
     'num_leaves': 15,
     'min_child_samples': 30,
@@ -45,8 +55,8 @@ LIGHTGBM_PARAMS = {
 }
 
 CATBOOST_PARAMS = {
-    'iterations': 500,
-    'learning_rate': 0.01,
+    'iterations': 200,
+    'learning_rate': 0.05,
     'depth': 4,
     'l2_leaf_reg': 3,
     'random_seed': 42,
