@@ -95,7 +95,7 @@ class LSTMModel:
         self.build_model(input_shape)
 
         callbacks = [
-            EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+            EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
             ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6)
         ]
 

@@ -29,8 +29,10 @@ CONFIDENCE_THRESHOLD = 0.55  # 置信度阈值
 
 # 模型参数
 LIGHTGBM_PARAMS = {
+    'objective': 'binary',
+    'metric': 'binary_logloss',
     'n_estimators': 500,
-    'learning_rate': 0.01,
+    'learning_rate': 0.02,
     'max_depth': 4,
     'num_leaves': 15,
     'min_child_samples': 30,
@@ -52,7 +54,7 @@ CATBOOST_PARAMS = {
 }
 
 LSTM_PARAMS = {
-    'seq_length': 10,
+    'seq_length': 5,
     'lstm_units_1': 16,
     'lstm_units_2': 8,
     'dropout': 0.5,

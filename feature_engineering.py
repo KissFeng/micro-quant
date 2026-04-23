@@ -116,26 +116,26 @@ class FeatureEngineer:
 
         return df
 
-    def create_label(self, df, horizon=5, for_backtest=False):
+    def create_label(self, df, horizon=5, for_backtest=False, threshold=0.01):
         """
         创建标签：未来N天涨跌
 
         参数:
             df: 股票数据 DataFrame
             horizon: 预测周期（天）
-            for_backtest: 是否为回测模式（True使用shift(-horizon)）
+            for_backtest: 是否为回测模式
+            threshold: 涨跌阈值，低于此涨幅的样本标记为-1（模糊区域）
 
         返回:
-            Series: 标签 (1=涨, 0=跌)
+            Series: 标签 (1=涨, 0=跌, -1=模糊/排除)
         """
-        if for_backtest:
-            # 回测模式：使用未来数据
-            future_return = df['Close'].shift(-horizon) / df['Close'] - 1
-        else:
-            # 训练模式：正常
-            future_return = df['Close'].shift(-horizon) / df['Close'] - 1
+        future_return = df['Close'].shift(-horizon) / df['Close'] - 1
 
-        label = (future_return > 0).astype(int)
+        label = pd.Series(-1, index=df.index)
+        label[future_return > threshold] = 1    # 明确上涨
+        label[future_return < -threshold] = 0    # 明确下跌
+        # 中间区域保持 -1（模糊，训练时排除）
+
         return label
 
     def prepare_features(self, df, horizon=5, dropna=True):
@@ -174,6 +174,9 @@ class FeatureEngineer:
         else:
             df_clean = df_features[feature_cols + ['Label']].fillna(0)
 
+        # 排除模糊样本（Label == -1）
+        df_clean = df_clean[df_clean['Label'] != -1]
+
         if df_clean.empty:
             return pd.DataFrame(), pd.Series(), feature_cols
 
@@ -188,8 +191,42 @@ class FeatureEngineer:
         """获取特征列名"""
         return self.feature_columns
 
+    def add_market_features(self, df, index_df):
+        """
+        添加大盘指数特征
 
-def combine_multiple_stocks(stock_data_dict, horizon=5, test_ratio=0.2):
+        参数:
+            df: 个股数据 DataFrame
+            index_df: 指数数据 DataFrame（必须包含 Close 列）
+
+        返回:
+            DataFrame: 添加了大盘特征的 DataFrame
+        """
+        if index_df.empty or df.empty:
+            return df
+
+        df = df.copy()
+
+        # 对齐日期
+        index_close = index_df['Close'].reindex(df.index, method='ffill')
+
+        # 大盘收益率
+        df['Market_Return_1d'] = index_close.pct_change(1)
+        df['Market_Return_5d'] = index_close.pct_change(5)
+        df['Market_Return_20d'] = index_close.pct_change(20)
+
+        # 大盘波动率
+        df['Market_Volatility_5d'] = df['Market_Return_1d'].rolling(window=5).std()
+        df['Market_Volatility_20d'] = df['Market_Return_1d'].rolling(window=20).std()
+
+        # 个股 vs 大盘相对强弱
+        stock_return_5d = df['Close'].pct_change(5)
+        df['Relative_Strength'] = stock_return_5d - df['Market_Return_5d']
+
+        return df
+
+
+def combine_multiple_stocks(stock_data_dict, horizon=5, test_ratio=0.2, index_data=None):
     """
     合并多只股票的数据，按时间顺序划分训练集和测试集
 
@@ -197,6 +234,7 @@ def combine_multiple_stocks(stock_data_dict, horizon=5, test_ratio=0.2):
         stock_data_dict: {stock_code: DataFrame}
         horizon: 预测周期
         test_ratio: 测试集比例
+        index_data: 指数数据 DataFrame（可选）
 
     返回:
         tuple: (X_train, y_train, X_test, y_test, stock_codes)
@@ -209,6 +247,10 @@ def combine_multiple_stocks(stock_data_dict, horizon=5, test_ratio=0.2):
     stock_codes = []
 
     for code, df in stock_data_dict.items():
+        # 添加大盘特征
+        if index_data is not None and not index_data.empty:
+            df = engineer.add_market_features(df, index_data)
+
         X, y, _ = engineer.prepare_features(df, horizon)
         if X.empty or len(X) < 30:
             continue

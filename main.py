@@ -20,7 +20,7 @@ warnings.filterwarnings('ignore')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import STOCK_LIST, DEFAULT_HORIZON, TRAIN_START_DATE, TRAIN_END_DATE
-from data_loader import load_multiple_stocks
+from data_loader import load_multiple_stocks, load_index_data
 from feature_engineering import combine_multiple_stocks, FeatureEngineer
 from models import LightGBMModel, CatBoostModel, LSTMModel
 from backtest import BacktestEngine
@@ -67,9 +67,12 @@ def run_training(horizon, test_ratio=0.2):
     stock_data = load_multiple_stocks(STOCK_LIST, TRAIN_START_DATE, TRAIN_END_DATE)
     print(f"✓ 成功加载 {len(stock_data)} 只股票")
 
+    # 加载上证指数作为大盘特征
+    index_data = load_index_data('sh000001', TRAIN_START_DATE, TRAIN_END_DATE)
+
     # 合并数据（按股票分别划分，避免时序泄露）
     X_train, y_train, X_test, y_test, stock_codes = combine_multiple_stocks(
-        stock_data, horizon, test_ratio=test_ratio
+        stock_data, horizon, test_ratio=test_ratio, index_data=index_data
     )
     if X_train.empty:
         print("⚠️ 训练数据为空")
@@ -146,12 +149,19 @@ def run_prediction(models, horizon, feature_columns=None):
     stock_data = load_multiple_stocks(STOCK_LIST, start_date, end_date)
     print(f"✓ 成功加载 {len(stock_data)} 只股票")
 
+    # 加载指数数据
+    index_data = load_index_data('sh000001', start_date, end_date)
+
     engineer = FeatureEngineer()
     predictions_list = []
 
     for code, df in stock_data.items():
         if df.empty or len(df) < 60:
             continue
+
+        # 添加大盘特征
+        if not index_data.empty:
+            df = engineer.add_market_features(df, index_data)
 
         # 计算特征
         X, y, feat_cols = engineer.prepare_features(df, horizon)
@@ -253,6 +263,9 @@ def run_backtest(model_results, horizon):
         print("⚠️ 数据不足，跳过回测")
         return {}
 
+    # 加载指数数据
+    index_data = load_index_data('sh000001', test_start, test_end)
+
     # 构建每只股票的价格字典
     prices_dict = {}
     for code, df in stock_data.items():
@@ -269,6 +282,10 @@ def run_backtest(model_results, horizon):
     for code, df in stock_data.items():
         if df.empty or len(df) < 30:
             continue
+
+        # 添加大盘特征
+        if not index_data.empty:
+            df = engineer.add_market_features(df, index_data)
 
         # 使用与训练完全相同的 prepare_features 流程
         X, y, feat_cols = engineer.prepare_features(df, horizon, dropna=False)
