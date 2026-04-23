@@ -49,11 +49,20 @@ def format_tencent_code(stock_code):
     将标准代码转换为腾讯财经格式
 
     参数:
-        stock_code: 如 '000001.SZ', '600519.SH', '000001'
+        stock_code: 如 '000001.SZ', '600519.SH', 'sh000001'
 
     返回:
-        tuple: (腾讯代码, 是否需要后缀处理)
+        tuple: (腾讯代码, 交易所后缀)
     """
+    code_lower = stock_code.lower()
+
+    # 已经是腾讯格式（sh/sz/bj前缀），直接返回
+    if code_lower.startswith(('sh', 'sz', 'bj')):
+        prefix = code_lower[:2]
+        num = code_lower[2:]
+        suffix = prefix.upper()
+        return code_lower, suffix
+
     # 去除 .SZ/.SH/.sz/.sh 后缀
     code = stock_code.replace('.SZ', '').replace('.SH', '').replace('.sz', '').replace('.sh', '').upper()
 
@@ -256,7 +265,40 @@ def load_index_data(index_code='sh000001', start_date=None, end_date=None):
     参数:
         index_code: 指数代码 (sh000001=上证, sz399001=深证, sh000300=沪深300)
     """
-    return load_stock_data(index_code, start_date, end_date)
+    cache_path = get_cache_path(f'idx_{index_code}')
+
+    # 尝试从缓存加载
+    if is_cache_valid(cache_path):
+        try:
+            df = pd.read_pickle(cache_path)
+            if len(df) > 10:
+                if start_date:
+                    df = df[df.index >= start_date]
+                if end_date:
+                    df = df[df.index <= end_date]
+                if len(df) > 10:
+                    return df
+        except Exception:
+            pass
+
+    # 直接获取
+    for retry in range(MAX_RETRIES):
+        df = get_stock_data_tencent(index_code, period_days=730)
+        if not df.empty:
+            if start_date:
+                df = df[df.index >= start_date]
+            if end_date:
+                df = df[df.index <= end_date]
+            if len(df) > 10:
+                df.to_pickle(cache_path)
+                return df
+        if retry < MAX_RETRIES - 1:
+            print(f"⚠️ {index_code} 重试 {retry+1}/{MAX_RETRIES}...")
+            time.sleep(2 ** retry)
+        else:
+            print(f"✗ {index_code} 获取失败")
+
+    return pd.DataFrame()
 
 
 if __name__ == '__main__':

@@ -116,7 +116,7 @@ class FeatureEngineer:
 
         return df
 
-    def create_label(self, df, horizon=5, for_backtest=False, threshold=0.01):
+    def create_label(self, df, horizon=5, for_backtest=False, threshold=0.005):
         """
         创建标签：未来N天涨跌
 

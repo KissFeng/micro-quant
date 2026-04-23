@@ -361,7 +361,7 @@ def run_backtest(model_results, horizon):
 
     # 运行回测
     engine = BacktestEngine(initial_capital=100000)
-    results = engine.run(merged, prices_dict, confidence_threshold=0.50)
+    results = engine.run(merged, prices_dict, confidence_threshold=0.45)
 
     print(f"\n回测结果:")
     print(f"  总收益率:   {results['total_return']*100:.2f}%")
