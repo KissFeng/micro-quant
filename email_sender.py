@@ -7,6 +7,7 @@ Email 推送模块 - 发送分析报告到邮箱
 import os
 import smtplib
 import base64
+import time
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -71,16 +72,27 @@ class EmailSender:
                     part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
                     msg.attach(part)
 
-        try:
-            # 使用 SSL 连接
-            with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port) as server:
-                server.login(self.sender, self.password)
-                server.sendmail(self.sender, self.recipient, msg.as_string())
-            print(f"✓ 邮件已发送: {subject}")
-            return True
-        except Exception as e:
-            print(f"✗ 邮件发送失败: {e}")
-            return False
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # 使用 SSL 连接
+                with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port) as server:
+                    server.login(self.sender, self.password)
+                    server.sendmail(self.sender, self.recipient, msg.as_string())
+                print(f"✓ 邮件已发送: {subject}")
+                # 发送成功后等待，避免连续发送被限流
+                time.sleep(5)
+                return True
+            except smtplib.SMTPServerDisconnected as e:
+                print(f"✗ 邮件发送失败(第{attempt+1}次): {e}")
+                if attempt < max_retries - 1:
+                    wait = 10 * (attempt + 1)
+                    print(f"  等待{wait}秒后重试...")
+                    time.sleep(wait)
+            except Exception as e:
+                print(f"✗ 邮件发送失败: {e}")
+                return False
+        return False
 
     def send_prediction_report(self, predictions_df, model_name='Model', date=None):
         """
