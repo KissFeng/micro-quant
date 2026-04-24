@@ -10,6 +10,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
+
+# 中文字体配置（style.use 会重置 rcParams，需在每次调用后重新设置）
+def _setup_chinese_font():
+    plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Hiragino Sans GB', 'Arial Unicode MS', 'Songti SC', 'SimHei', 'Microsoft YaHei']
+    plt.rcParams['axes.unicode_minus'] = False
+
+_setup_chinese_font()
 from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
 
 from models import LightGBMModel, CatBoostModel, LSTMModel
@@ -90,8 +97,9 @@ def generate_comparison_report(results_df, save_path='output/model_comparison.pn
     """
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else 'output', exist_ok=True)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     plt.style.use('seaborn-v0_8-darkgrid')
+    _setup_chinese_font()
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     models = results_df['Model'].tolist()
     colors = ['#2ecc71', '#3498db', '#e74c3c']
@@ -106,11 +114,12 @@ def generate_comparison_report(results_df, save_path='output/model_comparison.pn
         values = [results_df[results_df['Model'] == model][m].values[0] for m in metrics]
         ax1.bar(x + i * width, values, width, label=model, color=colors[i % len(colors)])
 
-    ax1.set_xlabel('Metric')
-    ax1.set_ylabel('Score')
-    ax1.set_title('Classification Metrics Comparison')
+    metric_labels = {'accuracy': '准确率', 'auc': 'AUC', 'precision': '精确率', 'recall': '召回率', 'f1': 'F1'}
+    ax1.set_xlabel('指标')
+    ax1.set_ylabel('分数')
+    ax1.set_title('分类指标对比')
     ax1.set_xticks(x + width)
-    ax1.set_xticklabels(metrics)
+    ax1.set_xticklabels([metric_labels.get(m, m) for m in metrics])
     ax1.legend()
     ax1.set_ylim(0, 1)
     ax1.grid(True, alpha=0.3)
@@ -125,8 +134,8 @@ def generate_comparison_report(results_df, save_path='output/model_comparison.pn
                     row['f1'] * 0.2 + row['precision'] * 0.1 + row['recall'] * 0.1)
         ax2.bar(model, composite, color=colors[i % len(colors)], edgecolor='black')
 
-    ax2.set_title('Composite Score\n(Acc*0.3 + AUC*0.3 + F1*0.2 + Prec*0.1 + Rec*0.1)')
-    ax2.set_ylabel('Score')
+    ax2.set_title('综合评分\n(准确率×0.3 + AUC×0.3 + F1×0.2 + 精确率×0.1 + 召回率×0.1)')
+    ax2.set_ylabel('分数')
     ax2.set_ylim(0, 1)
     ax2.grid(True, alpha=0.3, axis='y')
 

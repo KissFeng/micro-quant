@@ -9,6 +9,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 
+plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Hiragino Sans GB', 'Arial Unicode MS', 'Songti SC', 'SimHei', 'Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+# 中文字体配置（style.use 会重置 rcParams，需在每次调用后重新设置）
+def _setup_chinese_font():
+    plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Hiragino Sans GB', 'Arial Unicode MS', 'Songti SC', 'SimHei', 'Microsoft YaHei']
+    plt.rcParams['axes.unicode_minus'] = False
+
 from config import INITIAL_CAPITAL, COMMISSION, SLIPPAGE
 
 
@@ -285,8 +293,9 @@ class BacktestEngine:
             print("⚠️ 无回测结果可绘图")
             return
 
-        fig, axes = plt.subplots(2, 2, figsize=figsize)
         plt.style.use('seaborn-v0_8-darkgrid')
+        _setup_chinese_font()
+        fig, axes = plt.subplots(2, 2, figsize=figsize)
 
         dates = pd.to_datetime(self.dates)
         portfolio_values = np.array(self.portfolio_values)
@@ -294,11 +303,11 @@ class BacktestEngine:
 
         # 1. 收益曲线对比
         ax1 = axes[0, 0]
-        ax1.plot(dates, portfolio_values, label='Strategy', linewidth=2)
-        ax1.plot(dates, benchmark_values, label='Buy & Hold', linewidth=2, alpha=0.7)
-        ax1.set_title('Portfolio Value Comparison')
-        ax1.set_xlabel('Date')
-        ax1.set_ylabel('Value (¥)')
+        ax1.plot(dates, portfolio_values, label='策略', linewidth=2)
+        ax1.plot(dates, benchmark_values, label='买入持有', linewidth=2, alpha=0.7)
+        ax1.set_title('组合价值对比')
+        ax1.set_xlabel('日期')
+        ax1.set_ylabel('价值 (¥)')
         ax1.legend()
         ax1.grid(True)
 
@@ -308,9 +317,9 @@ class BacktestEngine:
         drawdowns = (running_max - portfolio_values) / running_max * 100
         ax2.fill_between(dates, drawdowns, 0, alpha=0.3, color='red')
         ax2.plot(dates, drawdowns, color='red', linewidth=1)
-        ax2.set_title('Drawdown')
-        ax2.set_xlabel('Date')
-        ax2.set_ylabel('Drawdown (%)')
+        ax2.set_title('回撤')
+        ax2.set_xlabel('日期')
+        ax2.set_ylabel('回撤 (%)')
         ax2.grid(True)
 
         # 3. 收益分布
@@ -318,9 +327,9 @@ class BacktestEngine:
         portfolio_returns = np.diff(portfolio_values) / portfolio_values[:-1] * 100
         ax3.hist(portfolio_returns, bins=30, alpha=0.7, edgecolor='black')
         ax3.axvline(x=0, color='red', linestyle='--', linewidth=2)
-        ax3.set_title('Daily Returns Distribution')
-        ax3.set_xlabel('Return (%)')
-        ax3.set_ylabel('Frequency')
+        ax3.set_title('日收益率分布')
+        ax3.set_xlabel('收益率 (%)')
+        ax3.set_ylabel('频次')
         ax3.grid(True)
 
         # 4. 关键指标
@@ -328,24 +337,21 @@ class BacktestEngine:
         ax4.axis('off')
 
         metrics = self.calculate_metrics()
-        metrics_text = f"""
-        Backtest Summary
-        ================
+        metrics_text = (
+            f"回测摘要\n"
+            f"================\n\n"
+            f"总收益率:      {metrics['total_return']*100:.2f}%\n"
+            f"年化收益率:    {metrics['annual_return']*100:.2f}%\n"
+            f"基准收益率:    {metrics['benchmark_return']*100:.2f}%\n\n"
+            f"夏普比率:      {metrics['sharpe_ratio']:.3f}\n"
+            f"最大回撤:      {metrics['max_drawdown']*100:.2f}%\n"
+            f"胜率:          {metrics['win_rate']*100:.2f}%\n\n"
+            f"总交易次数:    {metrics['total_trades']}\n"
+            f"盈利交易次数:  {metrics['winning_trades']}\n"
+            f"最终资金:      ¥{metrics['final_capital']:,.2f}"
+        )
 
-        Total Return:      {metrics['total_return']*100:.2f}%
-        Annual Return:     {metrics['annual_return']*100:.2f}%
-        Benchmark Return:   {metrics['benchmark_return']*100:.2f}%
-
-        Sharpe Ratio:       {metrics['sharpe_ratio']:.3f}
-        Max Drawdown:      {metrics['max_drawdown']*100:.2f}%
-        Win Rate:          {metrics['win_rate']*100:.2f}%
-
-        Total Trades:      {metrics['total_trades']}
-        Winning Trades:    {metrics['winning_trades']}
-        Final Capital:     ¥{metrics['final_capital']:,.2f}
-        """
-
-        ax4.text(0.1, 0.5, metrics_text, fontsize=12, family='monospace',
+        ax4.text(0.1, 0.5, metrics_text, fontsize=12,
                 verticalalignment='center', transform=ax4.transAxes,
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 

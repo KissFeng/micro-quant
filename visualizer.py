@@ -11,7 +11,13 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.gridspec import GridSpec
 
+# 中文字体配置（style.use 会重置 rcParams，需在每次调用后重新设置）
+def _setup_chinese_font():
+    plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Hiragino Sans GB', 'Arial Unicode MS', 'Songti SC', 'SimHei', 'Microsoft YaHei']
+    plt.rcParams['axes.unicode_minus'] = False
+
 plt.style.use('seaborn-v0_8-darkgrid')
+_setup_chinese_font()
 
 
 class Visualizer:
@@ -40,9 +46,9 @@ class Visualizer:
 
         # 上图：价格走势
         ax1 = axes[0]
-        ax1.plot(prices_series.index, prices_series.values, 'b-', linewidth=1.5, label='Price')
-        ax1.set_ylabel('Price', fontsize=12)
-        ax1.set_title('Stock Price and Prediction Signals', fontsize=14)
+        ax1.plot(prices_series.index, prices_series.values, 'b-', linewidth=1.5, label='价格')
+        ax1.set_ylabel('价格', fontsize=12)
+        ax1.set_title('股价走势与预测信号', fontsize=14)
         ax1.legend(loc='upper left')
         ax1.grid(True, alpha=0.3)
 
@@ -50,34 +56,34 @@ class Visualizer:
         buy_signals = predictions_df[predictions_df['probability'] > 0.55]['date'].unique()
         buy_prices = prices_series.loc[prices_series.index.isin(buy_signals)]
         ax1.scatter(buy_prices.index, buy_prices.values, marker='^', color='green',
-                    s=100, label='Buy Signal', zorder=5)
+                    s=100, label='买入信号', zorder=5)
 
         # 卖出信号（概率 <= 0.45）
         sell_signals = predictions_df[predictions_df['probability'] <= 0.45]['date'].unique()
         sell_prices = prices_series.loc[prices_series.index.isin(sell_signals)]
         ax1.scatter(sell_prices.index, sell_prices.values, marker='v', color='red',
-                   s=100, label='Sell Signal', zorder=5)
+                   s=100, label='卖出信号', zorder=5)
 
         ax1.legend()
 
         # 下图：预测概率
         ax2 = axes[1]
-        ax2.plot(dates, probs.loc[probs.index.isin(dates)].values, 'g-', linewidth=1.5, label='Predicted Probability')
-        ax2.axhline(y=0.5, color='gray', linestyle='--', linewidth=1, label='Neutral')
-        ax2.axhline(y=0.55, color='orange', linestyle='--', linewidth=1, label='Buy Threshold')
-        ax2.axhline(y=0.45, color='red', linestyle='--', linewidth=1, label='Sell Threshold')
+        ax2.plot(dates, probs.loc[probs.index.isin(dates)].values, 'g-', linewidth=1.5, label='预测概率')
+        ax2.axhline(y=0.5, color='gray', linestyle='--', linewidth=1, label='中性线')
+        ax2.axhline(y=0.55, color='orange', linestyle='--', linewidth=1, label='买入阈值')
+        ax2.axhline(y=0.45, color='red', linestyle='--', linewidth=1, label='卖出阈值')
 
         # 填充区域
         ax2.fill_between(dates, probs.loc[probs.index.isin(dates)].values, 0.5,
                         where=probs.loc[probs.index.isin(dates)].values > 0.5,
-                        alpha=0.3, color='green', label='Bullish Zone')
+                        alpha=0.3, color='green', label='看涨区间')
         ax2.fill_between(dates, probs.loc[probs.index.isin(dates)].values, 0.5,
                         where=probs.loc[probs.index.isin(dates)].values <= 0.5,
-                        alpha=0.3, color='red', label='Bearish Zone')
+                        alpha=0.3, color='red', label='看跌区间')
 
-        ax2.set_xlabel('Date', fontsize=12)
-        ax2.set_ylabel('Probability', fontsize=12)
-        ax2.set_title('Prediction Probability Over Time', fontsize=14)
+        ax2.set_xlabel('日期', fontsize=12)
+        ax2.set_ylabel('概率', fontsize=12)
+        ax2.set_title('预测概率随时间变化', fontsize=14)
         ax2.set_ylim(0, 1)
         ax2.legend(loc='upper right')
         ax2.grid(True, alpha=0.3)
@@ -108,13 +114,14 @@ class Visualizer:
         width = 0.25
         colors = ['#2ecc71', '#3498db', '#e74c3c']
 
+        metric_labels = {'accuracy': '准确率', 'auc': 'AUC', 'f1': 'F1分数'}
         for i, metric in enumerate(metrics):
             values = [results_dict[m].get(metric, 0) for m in models]
-            ax.bar(x + i * width, values, width, label=metric.upper(), color=colors[i])
+            ax.bar(x + i * width, values, width, label=metric_labels.get(metric, metric.upper()), color=colors[i])
 
-        ax.set_xlabel('Model', fontsize=12)
-        ax.set_ylabel('Score', fontsize=12)
-        ax.set_title('Model Performance Comparison', fontsize=14)
+        ax.set_xlabel('模型', fontsize=12)
+        ax.set_ylabel('分数', fontsize=12)
+        ax.set_title('模型性能对比', fontsize=14)
         ax.set_xticks(x + width)
         ax.set_xticklabels(models)
         ax.set_ylim(0, 1)
@@ -150,8 +157,8 @@ class Visualizer:
         ax.set_yticks(y_pos)
         ax.set_yticklabels(features)
         ax.invert_yaxis()
-        ax.set_xlabel('Importance (Gain)', fontsize=12)
-        ax.set_title(f'Top {top_n} Feature Importance', fontsize=14)
+        ax.set_xlabel('重要性 (Gain)', fontsize=12)
+        ax.set_title(f'Top {top_n} 特征重要性', fontsize=14)
         ax.grid(True, alpha=0.3, axis='x')
 
         plt.tight_layout()
@@ -175,12 +182,12 @@ class Visualizer:
         fig, ax = plt.subplots(figsize=(14, 6))
 
         dates = pd.to_datetime(dates)
-        ax.plot(dates, portfolio_values, label='Strategy', linewidth=2, color='#2ecc71')
-        ax.plot(dates, benchmark_values, label='Buy & Hold', linewidth=2, color='#3498db', alpha=0.7)
+        ax.plot(dates, portfolio_values, label='策略', linewidth=2, color='#2ecc71')
+        ax.plot(dates, benchmark_values, label='买入持有', linewidth=2, color='#3498db', alpha=0.7)
 
-        ax.set_xlabel('Date', fontsize=12)
-        ax.set_ylabel('Portfolio Value (HK$)', fontsize=12)
-        ax.set_title('Equity Curve Comparison', fontsize=14)
+        ax.set_xlabel('日期', fontsize=12)
+        ax.set_ylabel('组合价值 (¥)', fontsize=12)
+        ax.set_title('权益曲线对比', fontsize=14)
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -211,9 +218,9 @@ class Visualizer:
             normalized = df['Close'] / df['Close'].iloc[0]
             ax.plot(df.index, normalized, label=code, linewidth=1.5)
 
-        ax.set_xlabel('Date', fontsize=12)
-        ax.set_ylabel('Normalized Price (Start=1)', fontsize=12)
-        ax.set_title('Stock Performance Comparison', fontsize=14)
+        ax.set_xlabel('日期', fontsize=12)
+        ax.set_ylabel('归一化价格 (起始=1)', fontsize=12)
+        ax.set_title('股票走势对比', fontsize=14)
         ax.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
 
