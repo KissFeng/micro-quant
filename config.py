@@ -4,6 +4,19 @@
 配置文件 - 资金量化系统
 """
 
+import os
+from pathlib import Path
+
+# 自动加载 .env 文件（无需 python-dotenv）
+_env_file = Path(__file__).parent / '.env'
+if _env_file.exists():
+    with open(_env_file, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, _, value = line.partition('=')
+                os.environ.setdefault(key.strip(), value.strip())
+
 # 股票列表（20只自选股，覆盖更多行业）
 STOCK_LIST = {
     '000001.SZ': '平安银行',      # 银行
@@ -78,13 +91,13 @@ TRAIN_START_DATE = '2021-01-01'
 TRAIN_END_DATE = '2025-12-31'
 DATA_CACHE_DAYS = 3
 
-# Email 配置（需要用户填写）
+# Email 配置（敏感信息从环境变量读取，也可在 .env 文件中配置）
 EMAIL_CONFIG = {
-    'smtp_server': 'smtp.qq.com',      # QQ邮箱SMTP服务器
-    'smtp_port': 465,                   # SSL端口
-    'sender': '26699525@qq.com',      # 发件人邮箱
-    'password': 'akvehotucbimcajg',            # 邮箱授权码（非密码）
-    'recipient': '26699525@qq.com',  # 收件人邮箱
+    'smtp_server': os.environ.get('SMTP_SERVER', 'smtp.qq.com'),
+    'smtp_port': int(os.environ.get('SMTP_PORT', '465')),
+    'sender': os.environ.get('EMAIL_SENDER', ''),
+    'password': os.environ.get('EMAIL_PASSWORD', ''),
+    'recipient': os.environ.get('EMAIL_RECIPIENT', ''),
 }
 
 # 可视化配置

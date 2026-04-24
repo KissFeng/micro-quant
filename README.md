@@ -70,7 +70,7 @@ EMAIL_CONFIG = {
 python main.py --mode full --horizon 5
 ```
 
-流程：训练 → 预测 → 回测 → 可视化 → Email推送
+流程：训练 → 预测 → 回测 → 可视化
 
 ### 2. 仅训练模型
 
@@ -87,7 +87,7 @@ python predict.py --model all
 ### 4. 发送邮件
 
 ```bash
-python main.py --mode full --send-email
+python main.py --mode full --horizon 5 --send-email
 ```
 
 ## 参数说明
