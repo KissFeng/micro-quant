@@ -8,3 +8,9 @@ scikit-learn>=1.0.0
 matplotlib>=3.5.0
 seaborn>=0.12.0
 akshare>=1.10.0
+
+# Streamlit Web应用
+streamlit>=1.32.0
+openai>=1.0.0
+plotly>=5.18.0
+python-dotenv>=1.0.0
